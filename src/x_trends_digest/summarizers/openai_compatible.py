@@ -11,6 +11,7 @@ import urllib.request
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
+from .._http import open_no_redirect
 from ..config import ModelConfig
 from ..interfaces import Summarizer
 from ..models import Snapshot
@@ -37,15 +38,7 @@ class SummarizerError(RuntimeError):
     """调用模型失败。消息已面向用户，且不包含密钥。"""
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """不跟随重定向，避免把 Authorization 头转发到其他地址。"""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
-def _default_open(req: urllib.request.Request, timeout: float):
-    return urllib.request.build_opener(_NoRedirect).open(req, timeout=timeout)
+_default_open = open_no_redirect
 
 
 class OpenAICompatibleSummarizer(Summarizer):

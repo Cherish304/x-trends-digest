@@ -17,13 +17,24 @@ class ModelConfig:
 
 
 @dataclass(frozen=True)
+class XApiConfig:
+    bearer_token: str = field(repr=False)  # 不进入 repr / 日志
+    woeid: int = 1
+    max_posts: int = 10
+    trends_for_posts: int = 3
+    timeout: float = DEFAULT_TIMEOUT
+
+
+@dataclass(frozen=True)
 class Config:
     fetcher: str = "mock"
     summarizer: str = "mock"
     publisher: str = "file"
     cron: str = "0 9 * * *"
     output_dir: str = "out"
+    snapshot_path: str = ""
     model: Optional[ModelConfig] = None
+    xapi: Optional[XApiConfig] = None
 
 
 def load_dotenv(path: str, environ: Optional[dict] = None) -> None:
@@ -43,14 +54,30 @@ def load_dotenv(path: str, environ: Optional[dict] = None) -> None:
                 env[key] = value
 
 
+def _num(env: Mapping[str, str], name: str, default, cast, lo, hi=None):
+    raw = env.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = cast(raw)
+    except ValueError:
+        raise ValueError("%s 必须是%s" % (name, "整数" if cast is int else "数字"))
+    if value < lo or (hi is not None and value > hi):
+        rng = "不小于 %s" % lo if hi is None else "在 %s 到 %s 之间" % (lo, hi)
+        raise ValueError("%s 必须%s" % (name, rng))
+    return value
+
+
 def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
     env = os.environ if environ is None else environ
-    try:
-        timeout = float(env.get("DEEPSEEK_TIMEOUT", DEFAULT_TIMEOUT))
-    except ValueError:
-        raise ValueError("DEEPSEEK_TIMEOUT 必须是数字（秒）")
-    if timeout <= 0:
-        raise ValueError("DEEPSEEK_TIMEOUT 必须大于 0")
+    timeout = _num(env, "DEEPSEEK_TIMEOUT", DEFAULT_TIMEOUT, float, 0.001)
+    xapi = XApiConfig(
+        bearer_token=env.get("X_BEARER_TOKEN", "").strip(),
+        woeid=_num(env, "XTD_WOEID", 1, int, 1),
+        max_posts=_num(env, "XTD_MAX_POSTS", 10, int, 1, 100),
+        trends_for_posts=_num(env, "XTD_TRENDS_FOR_POSTS", 3, int, 1, 10),
+        timeout=_num(env, "XTD_FETCH_TIMEOUT", DEFAULT_TIMEOUT, float, 0.001),
+    )
     model = ModelConfig(
         api_key=env.get("DEEPSEEK_API_KEY", ""),
         base_url=env.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
@@ -63,5 +90,7 @@ def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
         publisher=env.get("XTD_PUBLISHER", "file"),
         cron=env.get("XTD_CRON", "0 9 * * *"),
         output_dir=env.get("XTD_OUTPUT_DIR", "out"),
+        snapshot_path=env.get("XTD_SNAPSHOT_PATH", ""),
         model=model,
+        xapi=xapi,
     )

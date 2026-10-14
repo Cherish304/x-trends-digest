@@ -1,0 +1,13 @@
+{
+  "fetched_at": "2026-10-14T09:00:00+08:00",
+  "trends": [
+    {"name": "#ExampleTopicA", "post_count": 120000, "url": "https://example.invalid/search?q=ExampleTopicA"},
+    {"name": "#ExampleTopicB", "post_count": null},
+    {"name": "示例热点"}
+  ],
+  "posts": [
+    {"author": "example_user_a", "text": "这是一条示例帖子 A", "likes": 1200, "reposts": 300, "url": "https://example.invalid/a/1"},
+    {"author": "example_user_b", "text": "Example post B about #ExampleTopicB", "likes": 800, "reposts": 150},
+    {"author": "example_user_c", "text": "只有文字的示例帖子 C"}
+  ]
+}

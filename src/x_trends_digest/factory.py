@@ -1,7 +1,7 @@
 """按配置名称选择实现。真实实现未启用，选择它们会明确报错。"""
 
 from .config import Config
-from .fetchers import MockFetcher
+from .fetchers import JsonFileFetcher, MockFetcher, XApiFetcher
 from .interfaces import Fetcher, Publisher, Summarizer
 from .publishers import FilePublisher, StdoutPublisher
 from .summarizers import MockSummarizer, OpenAICompatibleSummarizer
@@ -10,7 +10,11 @@ from .summarizers import MockSummarizer, OpenAICompatibleSummarizer
 def build_fetcher(cfg: Config) -> Fetcher:
     if cfg.fetcher == "mock":
         return MockFetcher()
-    raise ValueError("未知或未启用的 fetcher: %r（目前仅支持 mock）" % cfg.fetcher)
+    if cfg.fetcher == "json":
+        return JsonFileFetcher(cfg.snapshot_path)  # 缺路径时立即报错
+    if cfg.fetcher == "xapi":
+        return XApiFetcher(cfg.xapi)  # 缺 token 时立即报错
+    raise ValueError("未知的 fetcher: %r（支持 mock / json / xapi）" % cfg.fetcher)
 
 
 def build_summarizer(cfg: Config) -> Summarizer:

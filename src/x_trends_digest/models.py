@@ -9,6 +9,7 @@ class Trend:
     rank: int
     name: str
     post_count: int = 0
+    url: str = ""
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class Snapshot:
 
     trends: List[Trend] = field(default_factory=list)
     posts: List[Post] = field(default_factory=list)
+    fetched_at: str = ""  # ISO 时间，来源未提供时为空
 
 
 @dataclass(frozen=True)

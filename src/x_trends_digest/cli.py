@@ -9,6 +9,7 @@ from .config import load_config, load_dotenv
 from .factory import build_fetcher, build_publisher, build_summarizer
 from .pipeline import run_once
 from .scheduler import CronSchedule, run_forever
+from .fetchers import FetcherError
 from .summarizers import SummarizerError
 
 
@@ -39,6 +40,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.command == "run-once":
         try:
             job()
+        except FetcherError as exc:
+            print("抓取失败: %s" % exc, file=sys.stderr)
+            return 1
         except SummarizerError as exc:
             print("摘要失败: %s" % exc, file=sys.stderr)
             return 1

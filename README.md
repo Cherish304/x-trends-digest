@@ -1,6 +1,6 @@
 # x-trends-digest
 
-抓取 X 热点 → 生成摘要 → 定时推送。三块功能都是可替换的接口，目前只有 mock 实现，本地开发和测试不会访问 X 或任何外部接口。
+抓取 X 热点 → 生成摘要 → 定时推送。三块功能都是可替换的接口。默认全部是 mock，本地开发和测试不会访问 X 或任何外部接口（测试里的 HTTP 全部是注入的假 opener）。
 
 ## 结构
 
@@ -8,7 +8,11 @@
 src/x_trends_digest/
   models.py           数据结构：Trend / Post / Snapshot / Digest
   interfaces.py       三个接口：Fetcher / Summarizer / Publisher
-  fetchers/mock.py    固定的示例趋势和帖子
+  fetchers/
+    mock.py           固定的示例趋势和帖子
+    json_file.py      从本地 JSON 快照读取（XTD_FETCHER=json）
+    xapi.py           X API v2（XTD_FETCHER=xapi，需 Bearer token）
+    errors.py         FetcherConfigError / FetcherError
   summarizers/
     mock.py           透传：把按 chat 格式构造的 user 消息原样放进摘要
     openai_compatible.py  OpenAI 兼容 chat completions 真实实现（urllib，需 key）
@@ -21,10 +25,56 @@ src/x_trends_digest/
   scheduler.py        内置 5 段 cron 调度（仅标准库）
   cli.py              命令行：run-once / schedule
 tests/                unittest 测试，全部 mock
+examples/snapshot.json  json 抓取器的示例快照
 deploy/               systemd 与 cron 示例
 ```
 
 摘要接口按 chat completions 消息格式设计：`build_messages` 生成 `[{"role": "system"...}, {"role": "user"...}]`，`complete(messages)` 返回文本。
+
+## 抓取器
+
+### json 文件抓取器
+
+```bash
+XTD_FETCHER=json XTD_SNAPSHOT_PATH=examples/snapshot.json python3 -m x_trends_digest run-once
+```
+
+适合把别处（人工整理、其他脚本、第三方数据服务导出）得到的数据喂进来。快照格式：
+
+```json
+{
+  "fetched_at": "2026-10-14T09:00:00+08:00",
+  "trends": [{"name": "#话题", "post_count": 120000, "url": "可选"}],
+  "posts": [{"author": "用户名", "text": "正文", "likes": 1200, "reposts": 300, "url": "可选"}]
+}
+```
+
+宽容规则：
+
+- 所有顶层字段都可省略；`trends`、`posts` 缺失或不是列表时按空处理。
+- 趋势缺 `name`、帖子缺 `text` 时该条被跳过；趋势的 `rank` 按保留下来的顺序重新编号。
+- `post_count`、`likes`、`reposts` 缺失、为 `null`、负数、布尔或无法解析时按 0；字符串数字（如 `"1,234"`）和小数会转成整数。
+- `author` 缺失时记为 `unknown`，开头的 `@` 会被去掉；帖子的 `id` 可选。
+- 顶层不是对象、文件不存在、不是合法 JSON 或超过 5 MB 时报错（`run-once` 退出码 1）；`XTD_SNAPSHOT_PATH` 未设置时启动即报错（退出码 2）。
+
+### X API v2 抓取器
+
+```bash
+XTD_FETCHER=xapi
+X_BEARER_TOKEN=你的token     # 必填，缺失时启动即报错（退出码 2）
+XTD_WOEID=1                  # 默认 1（全球）
+XTD_MAX_POSTS=10             # 最终保留的热门帖子数，1 到 100
+XTD_TRENDS_FOR_POSTS=3       # 对前几个趋势取帖子，1 到 10
+XTD_FETCH_TIMEOUT=30         # 秒
+```
+
+流程：`GET https://api.x.com/2/trends/by/woeid/{XTD_WOEID}` 取趋势，再对前 `XTD_TRENDS_FOR_POSTS` 个趋势调用 `GET /2/tweets/search/recent`（排除转推，带 `public_metrics`），合并去重后按点赞数降序取前 `XTD_MAX_POSTS` 条。
+
+- 401 提示 token 无效；403 提示应用或套餐无权调用该接口；429 提示限流并带上 `x-rate-limit-reset`（若有）；5xx、超时、连接失败都有一行说明。`run-once` 遇到这些错误退出码为 1。
+- 搜索阶段如果在已取到部分帖子后被 429 限流，会用已有结果继续，不整体失败；趋势接口或第一次搜索就被限流则报错。
+- token 不会出现在日志、异常信息或 `repr(config)` 中；不跟随重定向，避免把 Authorization 头转发到别处。
+- 每次运行会消耗 1 + `XTD_TRENDS_FOR_POSTS` 次 API 调用，注意你的套餐额度。
+- 重要：这个抓取器依据 X API v2 的公开文档约定编写（趋势字段 `trend_name` / `tweet_count`，帖子字段 `public_metrics.like_count` / `retweet_count`），没有用真实 token 联调过，趋势接口的可用套餐也可能有限制。上线前必须用真实 token 验证一次。
 
 ## 使用真实模型（OpenAI 兼容）
 
@@ -65,7 +115,13 @@ python3 -m x_trends_digest schedule --cron "*/5 * * * *"   # 常驻调度
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| XTD_FETCHER | mock | 目前只支持 mock |
+| XTD_FETCHER | mock | mock / json / xapi |
+| XTD_SNAPSHOT_PATH | 空 | json 抓取器必填 |
+| X_BEARER_TOKEN | 空 | xapi 抓取器必填 |
+| XTD_WOEID | 1 | xapi：地区 woeid |
+| XTD_MAX_POSTS | 10 | xapi：保留的热门帖子数（1-100） |
+| XTD_TRENDS_FOR_POSTS | 3 | xapi：对前几个趋势取帖子（1-10） |
+| XTD_FETCH_TIMEOUT | 30 | xapi：请求超时（秒） |
 | XTD_SUMMARIZER | mock | mock / openai / deepseek |
 | XTD_PUBLISHER | file | file 或 stdout |
 | XTD_CRON | 0 9 * * * | 5 段 cron，本地时区 |
@@ -110,7 +166,7 @@ sudo systemctl enable --now x-trends-digest.timer
 
 ## 上线前还差什么
 
-- 真实 X 抓取来源：需要决定用官方 API、第三方数据服务还是其他合规来源，并实现 `Fetcher`，处理限流、鉴权和失败重试。
+- 真实 X 抓取来源：json 和 xapi 两个抓取器代码已实现，但只在假 HTTP 和示例文件下测过。xapi 需要用真实 token 联调一次，确认 X 开发者账号套餐是否包含趋势接口、字段名是否与实际响应一致、额度是否够用，并按需补重试和退避。
 - 真实模型：代码已实现，但没有用真实 key 联调过（只有 mock HTTP 测试）。上线前需用真实 key 验证一次，确认模型名、base_url 和返回格式，并按需补重试。
 - 真实推送渠道：实现 `Publisher`（邮件、Telegram、飞书、钉钉等），并处理失败重试与去重。
 - 密钥管理：生产环境的密钥只放在服务器的 `.env` 或密钥管理系统中，不进入仓库。
