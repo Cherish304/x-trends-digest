@@ -1,0 +1,10 @@
+[Unit]
+Description=x-trends-digest 单次执行（配合 timer 使用）
+
+[Service]
+Type=oneshot
+User=xtd
+WorkingDirectory=/opt/x-trends-digest
+EnvironmentFile=/opt/x-trends-digest/.env
+Environment=PYTHONPATH=/opt/x-trends-digest/src
+ExecStart=/usr/bin/python3 -m x_trends_digest run-once

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "x-trends-digest"
+version = "0.1.0"
+description = "抓取 X 热点 -> 生成摘要 -> 定时推送（默认全部 mock）"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+x-trends-digest = "x_trends_digest.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

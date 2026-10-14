@@ -1,0 +1,17 @@
+[Unit]
+Description=x-trends-digest 常驻调度（按 XTD_CRON 触发）
+After=network.target
+
+[Service]
+Type=simple
+User=xtd
+WorkingDirectory=/opt/x-trends-digest
+# 密钥与配置放在 .env，权限 600，不要提交到 git
+EnvironmentFile=/opt/x-trends-digest/.env
+Environment=PYTHONPATH=/opt/x-trends-digest/src
+ExecStart=/usr/bin/python3 -m x_trends_digest schedule
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
