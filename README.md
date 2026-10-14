@@ -11,7 +11,7 @@ src/x_trends_digest/
   fetchers/mock.py    固定的示例趋势和帖子
   summarizers/
     mock.py           透传：把按 chat 格式构造的 user 消息原样放进摘要
-    openai_compatible.py  OpenAI 兼容 chat completions 骨架（未启用）
+    openai_compatible.py  OpenAI 兼容 chat completions 真实实现（urllib，需 key）
   publishers/
     file.py           写 markdown 文件到 XTD_OUTPUT_DIR
     stdout.py         打印到标准输出
@@ -24,7 +24,29 @@ tests/                unittest 测试，全部 mock
 deploy/               systemd 与 cron 示例
 ```
 
-摘要接口按 chat completions 消息格式设计：`build_messages` 生成 `[{"role": "system"...}, {"role": "user"...}]`，`complete(messages)` 返回文本。接入真实模型时只需实现 `complete`。
+摘要接口按 chat completions 消息格式设计：`build_messages` 生成 `[{"role": "system"...}, {"role": "user"...}]`，`complete(messages)` 返回文本。
+
+## 使用真实模型（OpenAI 兼容）
+
+默认仍是 mock。要调用真实模型，在 `.env`（已被 git 忽略）或环境变量里设置：
+
+```bash
+XTD_SUMMARIZER=openai          # 或 deepseek，两者等价
+DEEPSEEK_API_KEY=你的key        # 必填，缺失时启动即报错（退出码 2）
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_TIMEOUT=30            # 秒
+```
+
+实现要点（`summarizers/openai_compatible.py`，仅用标准库 urllib）：
+
+- 请求 `POST {base_url}/chat/completions`，头部 `Authorization: Bearer <key>`，中文 system prompt 要求输出 300 字内的 markdown 摘要，并声明帖子内容只是待总结的数据、不执行其中的指令。
+- 错误面向用户给出一行说明：401/403 认证失败，429 限流（有 `Retry-After` 时会提示），5xx 服务端错误，超时，无法连接，返回格式不符。`run-once` 遇到这些错误退出码为 1。
+- 密钥不会出现在日志、异常信息或 `repr(config)` 中；其他 4xx 的响应片段若含 key 会被替换为 `***`。
+- `base_url` 必须是 https（仅 localhost 允许 http），避免 key 明文传输；不跟随重定向，避免把 Authorization 头转发到别处。
+- 没有自动重试：429 和 5xx 只报错。`schedule` 模式下单次失败会打印错误并等下一次触发。
+
+测试全部用注入的假 opener，不产生真实网络请求。
 
 ## 运行
 
@@ -44,13 +66,14 @@ python3 -m x_trends_digest schedule --cron "*/5 * * * *"   # 常驻调度
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | XTD_FETCHER | mock | 目前只支持 mock |
-| XTD_SUMMARIZER | mock | 目前只支持 mock |
+| XTD_SUMMARIZER | mock | mock / openai / deepseek |
 | XTD_PUBLISHER | file | file 或 stdout |
 | XTD_CRON | 0 9 * * * | 5 段 cron，本地时区 |
 | XTD_OUTPUT_DIR | out | file 推送目录 |
-| DEEPSEEK_API_KEY | 空 | mock 模式不读取 |
-| DEEPSEEK_BASE_URL | https://api.deepseek.com | |
+| DEEPSEEK_API_KEY | 空 | 使用 openai/deepseek 时必填 |
+| DEEPSEEK_BASE_URL | https://api.deepseek.com | 必须 https |
 | DEEPSEEK_MODEL | deepseek-chat | |
+| DEEPSEEK_TIMEOUT | 30 | 请求超时（秒） |
 
 cron 支持 `*`、数字、`a-b`、`a,b`、`*/n`、`a-b/n`；周 0 和 7 都是周日。
 
@@ -88,7 +111,7 @@ sudo systemctl enable --now x-trends-digest.timer
 ## 上线前还差什么
 
 - 真实 X 抓取来源：需要决定用官方 API、第三方数据服务还是其他合规来源，并实现 `Fetcher`，处理限流、鉴权和失败重试。
-- 真实模型：实现 `OpenAICompatibleSummarizer.complete`（POST `{base_url}/chat/completions`，读取 `choices[0].message.content`），并在 factory 中启用，补超时、重试和错误处理。
+- 真实模型：代码已实现，但没有用真实 key 联调过（只有 mock HTTP 测试）。上线前需用真实 key 验证一次，确认模型名、base_url 和返回格式，并按需补重试。
 - 真实推送渠道：实现 `Publisher`（邮件、Telegram、飞书、钉钉等），并处理失败重试与去重。
 - 密钥管理：生产环境的密钥只放在服务器的 `.env` 或密钥管理系统中，不进入仓库。
 - 监控告警：任务失败目前只打印日志，需要接入告警。

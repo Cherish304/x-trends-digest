@@ -33,14 +33,12 @@ class SummarizerTest(unittest.TestCase):
         self.assertIn("alice_mock", digest.body)
         self.assertEqual(s.last_messages[0]["role"], "system")
 
-    def test_openai_skeleton_is_disabled(self):
+    def test_openai_endpoint_and_body(self):
         cfg = ModelConfig(api_key="x", base_url="https://host.invalid/v1/", model="m")
         s = OpenAICompatibleSummarizer(cfg)
         self.assertEqual(s.endpoint, "https://host.invalid/v1/chat/completions")
         body = s.build_request_body([{"role": "user", "content": "hi"}])
         self.assertEqual(body["model"], "m")
-        with self.assertRaises(NotImplementedError):
-            s.complete([])
 
 
 class PublisherTest(unittest.TestCase):
@@ -89,12 +87,21 @@ class ConfigTest(unittest.TestCase):
             load_dotenv(p, env)
         self.assertEqual(env, {"A": "keep", "B": "2"})
 
-    def test_factory_rejects_real_implementations(self):
-        cfg = load_config({"XTD_FETCHER": "x_api", "XTD_SUMMARIZER": "deepseek",
+    def test_factory_rejects_unknown_implementations(self):
+        cfg = load_config({"XTD_FETCHER": "x_api", "XTD_SUMMARIZER": "nope",
                            "XTD_PUBLISHER": "slack"})
         for build in (build_fetcher, build_summarizer, build_publisher):
             with self.assertRaises(ValueError):
                 build(cfg)
+
+    def test_timeout_config(self):
+        self.assertEqual(load_config({"DEEPSEEK_TIMEOUT": "5"}).model.timeout, 5.0)
+        for bad in ("abc", "0", "-1"):
+            with self.assertRaises(ValueError):
+                load_config({"DEEPSEEK_TIMEOUT": bad})
+
+    def test_model_config_repr_hides_key(self):
+        self.assertNotIn("SECRET-VALUE", repr(load_config({"DEEPSEEK_API_KEY": "SECRET-VALUE"})))
 
 
 if __name__ == "__main__":

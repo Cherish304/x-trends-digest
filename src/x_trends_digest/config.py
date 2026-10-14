@@ -1,15 +1,19 @@
 """配置：全部从环境变量读取，不在代码里写任何密钥。"""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping, Optional
+
+DEFAULT_TIMEOUT = 30.0
 
 
 @dataclass(frozen=True)
 class ModelConfig:
-    api_key: str
+    # repr=False：避免 print(cfg) / 日志意外带出密钥
+    api_key: str = field(repr=False)
     base_url: str
     model: str
+    timeout: float = DEFAULT_TIMEOUT
 
 
 @dataclass(frozen=True)
@@ -41,10 +45,17 @@ def load_dotenv(path: str, environ: Optional[dict] = None) -> None:
 
 def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
     env = os.environ if environ is None else environ
+    try:
+        timeout = float(env.get("DEEPSEEK_TIMEOUT", DEFAULT_TIMEOUT))
+    except ValueError:
+        raise ValueError("DEEPSEEK_TIMEOUT 必须是数字（秒）")
+    if timeout <= 0:
+        raise ValueError("DEEPSEEK_TIMEOUT 必须大于 0")
     model = ModelConfig(
         api_key=env.get("DEEPSEEK_API_KEY", ""),
         base_url=env.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         model=env.get("DEEPSEEK_MODEL", "deepseek-chat"),
+        timeout=timeout,
     )
     return Config(
         fetcher=env.get("XTD_FETCHER", "mock"),

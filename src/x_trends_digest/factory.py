@@ -4,7 +4,7 @@ from .config import Config
 from .fetchers import MockFetcher
 from .interfaces import Fetcher, Publisher, Summarizer
 from .publishers import FilePublisher, StdoutPublisher
-from .summarizers import MockSummarizer
+from .summarizers import MockSummarizer, OpenAICompatibleSummarizer
 
 
 def build_fetcher(cfg: Config) -> Fetcher:
@@ -16,7 +16,12 @@ def build_fetcher(cfg: Config) -> Fetcher:
 def build_summarizer(cfg: Config) -> Summarizer:
     if cfg.summarizer == "mock":
         return MockSummarizer()
-    raise ValueError("未知或未启用的 summarizer: %r（目前仅支持 mock）" % cfg.summarizer)
+    if cfg.summarizer in ("openai", "deepseek"):
+        # key 缺失或 base_url 不安全时在这里立即抛 SummarizerConfigError
+        return OpenAICompatibleSummarizer(cfg.model)
+    raise ValueError(
+        "未知的 summarizer: %r（支持 mock / openai / deepseek）" % cfg.summarizer
+    )
 
 
 def build_publisher(cfg: Config) -> Publisher:

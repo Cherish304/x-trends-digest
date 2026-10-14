@@ -9,6 +9,7 @@ from .config import load_config, load_dotenv
 from .factory import build_fetcher, build_publisher, build_summarizer
 from .pipeline import run_once
 from .scheduler import CronSchedule, run_forever
+from .summarizers import SummarizerError
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -21,10 +22,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     load_dotenv(args.env_file, os.environ)
-    cfg = load_config()
-    fetcher = build_fetcher(cfg)
-    summarizer = build_summarizer(cfg)
-    publisher = build_publisher(cfg)
+    try:
+        cfg = load_config()
+        fetcher = build_fetcher(cfg)
+        summarizer = build_summarizer(cfg)  # key 缺失在这里立即报错
+        publisher = build_publisher(cfg)
+    except ValueError as exc:
+        print("配置错误: %s" % exc, file=sys.stderr)
+        return 2
 
     def job() -> str:
         dest = run_once(fetcher, summarizer, publisher)
@@ -32,7 +37,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         return dest
 
     if args.command == "run-once":
-        job()
+        try:
+            job()
+        except SummarizerError as exc:
+            print("摘要失败: %s" % exc, file=sys.stderr)
+            return 1
         return 0
 
     expr = args.cron or cfg.cron
