@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from ..models import Digest, Snapshot
-from ._common import FALLBACK_NOTICE, date_cn, resolve_date
+from ._common import FALLBACK_NOTICE, Meta, date_cn, format_dt, resolve_date, weekday_cn
 from .email_html import render_html
 from .email_text import render_text
 
@@ -24,14 +24,22 @@ def render_email(
     snapshot: Optional[Snapshot] = None,
     now: Optional[datetime] = None,
 ) -> RenderedEmail:
-    date_label = date_cn(resolve_date(snapshot, now))
-    subject = "%s · %s" % (EMAIL_TITLE, date_label)
+    """now 只用于"邮件生成时间"和没有 fetched_at 时的日期，测试里可注入以保证输出稳定。"""
+    shown = resolve_date(snapshot, now)
+    meta = Meta(
+        title=EMAIL_TITLE,
+        date_label=date_cn(shown),
+        weekday=weekday_cn(shown),
+        generated=(now or datetime.now()).strftime("%Y-%m-%d %H:%M"),
+        fetched=format_dt(snapshot.fetched_at) if snapshot and snapshot.fetched_at else "",
+    )
+    subject = "%s · %s" % (EMAIL_TITLE, meta.date_label)
     if digest.fallback:
         subject += "（%s）" % FALLBACK_NOTICE
     return RenderedEmail(
         subject=subject,
-        html=render_html(digest, snapshot, EMAIL_TITLE, date_label),
-        text=render_text(digest, snapshot, EMAIL_TITLE, date_label),
+        html=render_html(digest, snapshot, meta),
+        text=render_text(digest, snapshot, meta),
     )
 
 

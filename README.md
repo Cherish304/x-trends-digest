@@ -95,15 +95,59 @@ python3 -m x_trends_digest render-email --out-dir mail --name today
 
 该命令会走完整的抓取和摘要流程，然后只写出这两个文件；`--out-dir` 默认取 `XTD_OUTPUT_DIR`，`--name` 默认 `digest`。文件先写临时文件再改名，外部程序不会读到半截内容。邮件主题在命令输出的第一行。
 
-HTML 的约束，针对 QQ 邮箱和 Gmail 的兼容性：
+### 版式
 
-- 只用表格布局和元素上的内联 `style`，没有 `<style>`、`<link>`、脚本、图片和 flex/grid。
+按新闻简报的样子排版，从上到下依次是：
+
+1. 深海蓝渐变头图条：品牌小字 `X TRENDS DIGEST`、标题、日期加星期、副标题。
+2. 「今日一句话」导语卡：取摘要的第一句话（超过 90 字则截断），并从正文里去掉，避免重复。摘要不可用时（备用摘要）上方会多一条黄色提示条。
+3. 摘要分节：每节一个 emoji 加小标题加一小段强调色横条，节内是要点列表或段落。emoji 按标题关键词选（概览 📰、要点 📌、关注 👀、趋势 🔥、热帖 💬，其余 📝），标题自带 emoji 时不再重复。
+4. 趋势排行：前三名是大卡片，编号徽章分别是金、银、铜色，第一名卡片底色略黄；第 4 名起用两列紧凑布局。名称链接到 `https://x.com/search?q=...`，数量缺失时不显示数量。
+5. 热帖卡片：首字母头像圆圈（同一作者颜色固定）、`@handle`、正文最多 4 行、点赞与转发的图标加数字、「查看原帖」按钮（没有安全链接时不显示按钮）。
+6. 页脚：数据来源、摘要来源（AI 或规则）、数据抓取时间和邮件生成时间、退订占位。
+
+配色统一：深海蓝头图，单一蓝色强调色，其余是 slate 灰阶。字号层级：标题 28px、分节小标题 18px、导语 17px、正文 15px、辅助信息 12 到 14px，行高 1.5 以上。中文字体栈：`-apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif`。
+
+退订链接在 HTML 和纯文本里都是占位符 `{{UNSUBSCRIBE_URL}}`，发送前由外部程序替换成真实的退订地址。
+
+### 兼容性和降级
+
+- 只用表格布局和元素上的内联 `style`，没有 `<style>`、`<link>`、脚本、图片、SVG 和 flex/grid。
 - 外层表格 `width=100%`，内层 `max-width:600px`，加了 viewport 元标签，手机上自动收窄。
-- 内容依次是：标题和日期（优先用快照的 `fetched_at`）；摘要，按模型输出的 `##` 标题分节；趋势排行（序号、名称，链接到 `https://x.com/search?q=...`，数量缺失时不显示数量）；热帖卡片（作者、正文、点赞数、转发数、原帖链接）；页脚。
+- Outlook（Word 渲染引擎）不认 `max-width`、`border-radius` 和渐变：用 `<!--[if mso]>` 条件注释套一层固定 600px 的表格；头图同时写了 `bgcolor` 和 `background-color` 纯色，渐变不生效时回退成深色；圆角在 Outlook 里变直角，圆形徽章变方块。按钮用 `<a>` 加同色边框撑出内边距，Outlook 里也有体积。
+- 帖子正文的 4 行截断：邮件客户端普遍不支持 `line-clamp`，所以先按字符宽度（全角字占一格，拉丁字符约半格）估算折行，在第 4 行末尾加 `…`；另外配了 `-webkit-line-clamp:4` 和 `max-height:92px` 兜底。手机上折行更多时由 `max-height` 裁掉多余部分，可能出现半行被裁切，没有省略号。
+- 收件箱列表里的预览文字（preheader）是导语，放在隐藏的 `div` 里。
 - 所有来自抓取数据和模型输出的文本都经过 HTML 转义。链接只放行 http/https，且不含空白字符，`javascript:` 之类一律丢弃；趋势链接固定指向 X 搜索页，不使用数据源给的 url。
-- 趋势排行和热帖各最多展示 10 条，单条帖子正文最多 300 字。
+- 趋势排行和热帖各最多展示 10 条。
 
-没有在真实邮箱客户端里看过渲染效果；上面的兼容性是按这些客户端的已知限制写的，上线前请发一封测试邮件到 QQ 邮箱和 Gmail 的网页版与手机端确认。
+### 设计参考
+
+动手前读了这些项目，并在实现时参考了它们的做法：
+
+- leemunroe/responsive-html-email-template：读了 README 和 `email-inlined.html`。采用 600px 容器、表格布局、所有样式内联、`max-width` 配 `width:100%`、带 `<meta viewport>`；按钮用 `display:inline-block` 的 `<a>` 加圆角；整体留白大、一个主按钮的克制风格。它的 README 强调发送前必须内联 CSS 并在多个客户端实测，所以这里一开始就不用 `<style>`。
+- mailgun/transactional-email-templates：读了 README 和 `action.html`。采用它的按钮写法（用 `border-width: 10px 20px` 加同色边框撑出内边距，Outlook 里也有体积）、淡灰背景配白色内容卡、页脚用小号灰字。
+- resend/react-email：读了 README。采用它的组件拆分思路（Container、Section、Row、Column、Button、Divider、Preview），对应到这里的容器表格、分节、两列布局、按钮、分割线和隐藏的预览文字；它以 Gmail、Outlook 等多个客户端实测为准的态度也一样。
+- mailchimp/email-blueprints：读了 README。采用它对 Outlook 的处理思路（条件注释加固定宽度）和「模块化」的做法，各板块是独立的表格行，互不影响。
+- TLDR 简报：读了站点存档页和一期正文。借鉴它的版式：标题行带 emoji、按板块分组、每条只有几句话的摘要、清晰的赞助与页脚区分。
+- Morning Brew：存档页被 Cloudflare 的人机验证拦住，没有读到内容，所以没有参考它。
+
+这些是对公开页面的阅读和归纳，不是逐像素复刻，也没有拷贝它们的代码。
+
+### 样例和预览
+
+`examples/preview.html` 和 `examples/preview.txt` 是用 `examples/snapshot.json` 加固定的摘要正文渲染出来的样例（时间固定，输出稳定）。重新生成：
+
+```bash
+PYTHONPATH=src python3 -m x_trends_digest.render.preview
+```
+
+测试里有一条校验样例和当前渲染器是否同步，改了渲染器忘记重新生成会失败。
+
+### 已验证和没验证的
+
+我在 Chrome 里打开 `preview.html`，分别看了桌面宽度和 375px 宽的 iframe：头图、导语卡、分节、金银铜徽章、两列紧凑布局、帖子卡片、4 行截断和页脚都按预期显示。看截图发现并修掉一个问题：手机宽度下 `break-all` 会把 "Launch" 拦腰拆成 "Lau / nch"，现在改成只在单词本身放不下时才断词。
+
+��有验证的：QQ 邮箱、Gmail 和 Outlook 里的真实显示。Chrome 能正常渲染不代表这些客户端也行。Outlook 的降级（直角、纯色头图、固定宽度）是按它的已知限制写的，没有在 Outlook 里看过；`-webkit-box` 的行截断在各客户端的支持也不一致。上线前请发一封测试邮件到 QQ 邮箱、Gmail 和 Outlook 的网页版与手机端确认。
 
 ## 抓取数量缺失
 

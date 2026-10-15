@@ -33,13 +33,16 @@ class JsonFetcherTest(unittest.TestCase):
     def test_example_file_parses(self):
         snap = JsonFileFetcher(EXAMPLE).fetch()
         self.assertEqual(snap.fetched_at, "2026-10-14T09:00:00+08:00")
-        self.assertEqual([t.name for t in snap.trends], ["#ExampleTopicA", "#ExampleTopicB", "示例热点"])
-        self.assertEqual([t.rank for t in snap.trends], [1, 2, 3])
+        self.assertEqual([t.name for t in snap.trends][:3],
+                         ["#ExampleTopicA", "#ExampleTopicB", "示例热点"])
+        self.assertEqual([t.rank for t in snap.trends], list(range(1, 8)))
         self.assertEqual(snap.trends[0].post_count, 120000)
         self.assertIsNone(snap.trends[1].post_count)  # null -> None（未知，不是 0）
         self.assertIsNone(snap.trends[2].post_count)  # 缺失 -> None
-        self.assertEqual(len(snap.posts), 3)
+        self.assertEqual(snap.trends[3].post_count, 38200)
+        self.assertEqual(len(snap.posts), 4)
         self.assertEqual(snap.posts[2].likes, 0)  # 缺失 -> 0
+        self.assertEqual(snap.posts[3].author, "long_post_demo")  # 开头的 @ 被去掉
 
     def test_tolerant_of_bad_fields(self):
         with tempfile.TemporaryDirectory() as d:

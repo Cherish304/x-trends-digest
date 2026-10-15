@@ -3,11 +3,16 @@
   "trends": [
     {"name": "#ExampleTopicA", "post_count": 120000, "url": "https://example.invalid/search?q=ExampleTopicA"},
     {"name": "#ExampleTopicB", "post_count": null},
-    {"name": "示例热点"}
+    {"name": "示例热点"},
+    {"name": "#开源周报", "post_count": 38200},
+    {"name": "New Model Launch", "post_count": 27500},
+    {"name": "#开发者大会", "post_count": 18900},
+    {"name": "Home Devices", "post_count": 9400}
   ],
   "posts": [
-    {"author": "example_user_a", "text": "这是一条示例帖子 A", "likes": 1200, "reposts": 300, "url": "https://example.invalid/a/1"},
-    {"author": "example_user_b", "text": "Example post B about #ExampleTopicB", "likes": 800, "reposts": 150},
-    {"author": "example_user_c", "text": "只有文字的示例帖子 C"}
+    {"author": "example_user_a", "text": "这是一条示例帖子 A，用来展示卡片里的头像占位、作者名、正文、点赞与转发数字。", "likes": 12800, "reposts": 3100, "url": "https://example.invalid/a/1"},
+    {"author": "example_user_b", "text": "Example post B about #ExampleTopicB — a short English post to check mixed-language rendering.", "likes": 8600, "reposts": 1500, "url": "https://example.invalid/b/2"},
+    {"author": "example_user_c", "text": "只有文字的示例帖子 C，没有原帖链接，所以卡片里不会出现按钮。"},
+    {"author": "@long_post_demo", "text": "这是一条很长的示例帖子，用来演示正文最多显示四行、超出部分自动截断的效果。邮件客户端普遍不支持多行省略，所以渲染时会按字符宽度先估算好再截断。第二句继续往下写，直到明显超过四行的长度，这样截断的省略号才会出现在第四行的末尾，而不是把卡片撑得很高。最后一句话一定看不到。", "likes": 5400, "reposts": 920, "url": "https://example.invalid/d/4"}
   ]
 }
