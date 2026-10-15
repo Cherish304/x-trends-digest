@@ -27,6 +27,16 @@
 - 配置错误不会被吞掉：缺 `DEEPSEEK_API_KEY` 或 `DEEPSEEK_BASE_URL` 非 https 仍然在启动时报错（退出码 2）。
 - 因此 `run-once` 在模型出错时不再失败，而是出带标注的备用邮件（这是行为变化）。
 
+**C) 邮件版式重新设计（新闻简报风格）**
+
+- 先读了参考项目：leemunroe/responsive-html-email-template、mailgun/transactional-email-templates（含 `action.html` 的内联样式）、resend/react-email、mailchimp/email-blueprints 的 README，以及 TLDR 的存档页和一期正文。Morning Brew 的存档页被 Cloudflare 人机验证挡住，没有读到，所以没有参考它。采用了哪些要点写在 README「设计参考」一节。
+- 重做了 `render/email_html.py`：深海蓝渐变头图条（品牌小字、标题、日期加星期、副标题）；「今日一句话」导语卡（取摘要第一句并从正文去重）；摘要分节，每节 emoji 加小标题加强调色横条；趋势前三名大卡片，编号徽章金银铜，第 4 名起两列紧凑布局；热帖卡片有首字母头像圆圈、`@handle`、正文最多 4 行、点赞和转发图标数字、「查看原帖」按钮；页脚含数据来源、摘要来源、抓取与生成时间、退订占位 `{{UNSUBSCRIBE_URL}}`。
+- 配色统一（深海蓝加单一蓝色强调，其余 slate 灰阶），字号层级清楚，中文字体栈为 `-apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif`。
+- 兼容性：仍然只用内联 CSS 和表格，宽度 600px；Outlook 用 `<!--[if mso]>` 套固定 600px 外壳，头图有纯色回退，按钮用边框撑内边距，圆角和渐变降级；有隐藏的预览文字。
+- 纯文本版同步整理：同样的板块顺序，带分隔线、编号、图标符号，页脚与 HTML 共用同一份文案（`footer_lines`）。
+- 样例：`examples/preview.html` 和 `examples/preview.txt`，由 `examples/snapshot.json`（已扩充到 7 个趋势、4 条帖子，以覆盖两列布局和截断）加固定摘要渲染；`python3 -m x_trends_digest.render.preview` 可重新生成。
+- 看渲染图时发现并修掉一个问题：手机宽度下 `word-break:break-all` 会把 "Launch" 拦腰拆成 "Lau / nch"，且箭头单独占一行；改成只在单词本身放不下时才断词，箭头用不换行空格接在词后。另一个问题是正文截断时省略号可能折到第 5 行，改成按最后一个视觉行腾位置。
+
 ## 技术栈
 
 Python 3.9+（本机 3.9.6），只用标准库，测试用 unittest，没有第三方依赖。
@@ -39,7 +49,7 @@ Python 3.9+（本机 3.9.6），只用标准库，测试用 unittest，没有第
 PYTHONPATH=src python3 -m unittest discover -v -s tests -t .
 ```
 
-结果：`Ran 96 tests ... OK`，96 个全部通过（上一轮是 63 个，新增 33 个，在 `tests/test_render.py` 和 `tests/test_fallback.py`，并调整了几个因行为变化而过时的旧断言）。
+结果：`Ran 120 tests ... OK`，120 个全部通过（上一轮是 96 个）。本轮重写了 `tests/test_render.py` 来匹配新版式，并新增预览同步测试；`tests/test_fetchers.py` 里的示例文件断言随扩充后的 `snapshot.json` 更新。
 
 所有测试都没有真实网络请求：HTTP 用注入的假 opener，渲染和备用逻辑是纯本地的。新测试覆盖：
 
