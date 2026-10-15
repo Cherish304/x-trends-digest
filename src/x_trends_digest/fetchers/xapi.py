@@ -13,7 +13,7 @@ import json
 import socket
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote, urlencode
 
@@ -22,7 +22,7 @@ from ..config import XApiConfig
 from ..interfaces import Fetcher
 from ..models import Post, Snapshot, Trend
 from .errors import FetcherConfigError, FetcherError
-from .json_file import to_int
+from .json_file import to_count, to_int
 
 API_BASE = "https://api.x.com"
 _MAX_RESPONSE_BYTES = 5 * 1024 * 1024
@@ -34,7 +34,8 @@ class XApiFetcher(Fetcher):
         self,
         cfg: XApiConfig,
         opener: Optional[Callable[..., Any]] = None,
-        now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        # 用本地时区的带偏移时间，邮件里的日期才不会因为 UTC 换算差一天
+        now: Callable[[], datetime] = lambda: datetime.now().astimezone(),
     ) -> None:
         token = cfg.bearer_token
         if not token:
@@ -71,7 +72,7 @@ class XApiFetcher(Fetcher):
                 Trend(
                     rank=len(trends) + 1,
                     name=name,
-                    post_count=to_int(item.get("tweet_count")),
+                    post_count=to_count(item.get("tweet_count")),
                     url="https://x.com/search?q=" + quote(name),
                 )
             )

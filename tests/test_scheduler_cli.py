@@ -70,9 +70,10 @@ class CliTest(unittest.TestCase):
                     del os.environ["XTD_OUTPUT_DIR"]
                 else:
                     os.environ["XTD_OUTPUT_DIR"] = old
-            files = [f for f in os.listdir(d) if f.endswith(".md")]
+            names = os.listdir(d)
         self.assertEqual(rc, 0)
-        self.assertEqual(len(files), 1)
+        self.assertEqual(len([n for n in names if n.endswith(".html")]), 1)
+        self.assertEqual(len([n for n in names if n.endswith(".txt")]), 1)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,12 @@ from .config import Config
 from .fetchers import JsonFileFetcher, MockFetcher, XApiFetcher
 from .interfaces import Fetcher, Publisher, Summarizer
 from .publishers import FilePublisher, StdoutPublisher
-from .summarizers import MockSummarizer, OpenAICompatibleSummarizer
+from .summarizers import (
+    FallbackSummarizer,
+    MockSummarizer,
+    OpenAICompatibleSummarizer,
+    RuleBasedSummarizer,
+)
 
 
 def build_fetcher(cfg: Config) -> Fetcher:
@@ -21,8 +26,11 @@ def build_summarizer(cfg: Config) -> Summarizer:
     if cfg.summarizer == "mock":
         return MockSummarizer()
     if cfg.summarizer in ("openai", "deepseek"):
-        # key 缺失或 base_url 不安全时在这里立即抛 SummarizerConfigError
-        return OpenAICompatibleSummarizer(cfg.model)
+        # key 缺失或 base_url 不安全属于配置错误：在这里立即抛 SummarizerConfigError，
+        # 不会被备用逻辑吞掉。运行期的超时和调用错误才退回规则摘要。
+        return FallbackSummarizer(
+            OpenAICompatibleSummarizer(cfg.model), RuleBasedSummarizer()
+        )
     raise ValueError(
         "未知的 summarizer: %r（支持 mock / openai / deepseek）" % cfg.summarizer
     )

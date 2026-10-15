@@ -36,7 +36,8 @@ class JsonFetcherTest(unittest.TestCase):
         self.assertEqual([t.name for t in snap.trends], ["#ExampleTopicA", "#ExampleTopicB", "示例热点"])
         self.assertEqual([t.rank for t in snap.trends], [1, 2, 3])
         self.assertEqual(snap.trends[0].post_count, 120000)
-        self.assertEqual(snap.trends[1].post_count, 0)  # null -> 0
+        self.assertIsNone(snap.trends[1].post_count)  # null -> None（未知，不是 0）
+        self.assertIsNone(snap.trends[2].post_count)  # 缺失 -> None
         self.assertEqual(len(snap.posts), 3)
         self.assertEqual(snap.posts[2].likes, 0)  # 缺失 -> 0
 
@@ -51,7 +52,8 @@ class JsonFetcherTest(unittest.TestCase):
             })
             snap = JsonFileFetcher(p).fetch()
         self.assertEqual([t.name for t in snap.trends], ["ok", "neg", "bool"])
-        self.assertEqual([t.post_count for t in snap.trends], [1234, 0, 0])
+        # 负数、布尔都视为未知；"1,234" 转成整数
+        self.assertEqual([t.post_count for t in snap.trends], [1234, None, None])
         self.assertEqual([t.rank for t in snap.trends], [1, 2, 3])
         self.assertEqual((snap.posts[0].author, snap.posts[0].likes, snap.posts[0].reposts),
                          ("alice", 7, 2))

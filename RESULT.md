@@ -2,22 +2,30 @@
 
 ## 做了什么
 
-- 三个可替换接口：`Fetcher`、`Summarizer`、`Publisher`（`src/x_trends_digest/interfaces.py`），各有 mock 实现，默认全部 mock。
-- 推送：写 markdown 文件到 `XTD_OUTPUT_DIR`，或打印到标准输出。
-- 三个抓取器（`XTD_FETCHER`）：
-  - `mock`：固定的示例趋势和帖子，不访问网络（默认）。
-  - `json`（`fetchers/json_file.py`）：从 `XTD_SNAPSHOT_PATH` 读取 JSON 快照，转成 Snapshot。字段缺失宽容处理：缺 `name` 的趋势、缺 `text` 的帖子被跳过；数字字段缺失、null、负数、布尔或无法解析时按 0，`"1,234"` 这类字符串数字会转成整数；`author` 缺失记为 `unknown`。格式写在 README，示例在 `examples/snapshot.json`。
-  - `xapi`（`fetchers/xapi.py`，仅用 urllib）：`GET https://api.x.com/2/trends/by/woeid/{XTD_WOEID}`（默认 1）取趋势，再对前 `XTD_TRENDS_FOR_POSTS`（默认 3）个趋势调用 `GET /2/tweets/search/recent`（排除转推，带 `public_metrics`），合并去重后按点赞降序取前 `XTD_MAX_POSTS`（默认 10）条。
-- xapi 的错误处理与安全：
-  - `X_BEARER_TOKEN` 缺失时构造即报错（CLI 退出码 2），token 含空白字符也会拒绝，错误信息不回显 token。
-  - 有请求超时（`XTD_FETCH_TIMEOUT`）。401 提示 token 无效，403 提示套餐无权，429 提示限流并带 `x-rate-limit-reset`，5xx、超时、连接失败各有一行说明；`run-once` 退出码 1。
-  - 搜索阶段已有部分帖子后被 429 限流，会用已有结果继续；趋势接口或第一次搜索就被限流则报错。
-  - token 不进入日志、异常信息或 `repr(config)`；其他 4xx 的响应片段含 token 会替换为 `***`；不跟随重定向。
-  - 没有自动重试。
-- 两个抓取器已接入 factory 和 config；抓取失败在 CLI 里以"抓取失败: …"一行输出。
-- 两个抓取器和摘要器共用 `_http.py` 的不跟随重定向的 opener。`Snapshot` 新增 `fetched_at`，`Trend` 新增 `url`。
-- 摘要器有 mock 和真实的 OpenAI 兼容实现（`XTD_SUMMARIZER=openai|deepseek`，细节见 README）。
-- 内置 5 段 cron 调度，命令行有 `run-once` 和 `schedule`；部署文件在 `deploy/`（systemd、timer、crontab）。
+- 三个可替换接口：`Fetcher`、`Summarizer`、`Publisher`（`src/x_trends_digest/interfaces.py`），各有 mock 实现，默认全部 mock。`Publisher.publish` 现在额外接收 `Snapshot`，用于渲染趋势排行和热帖卡片。
+- 抓取器（`XTD_FETCHER`）：`mock`、`json`（本地 JSON 快照，字段宽容）、`xapi`（X API v2，urllib，带超时和 401/403/429/5xx 处理，缺 `X_BEARER_TOKEN` 立即报错）。
+- 摘要器（`XTD_SUMMARIZER`）：`mock`（透传）、`openai`/`deepseek`（OpenAI 兼容 chat completions，urllib）。
+- 内置 5 段 cron 调度，命令行有 `run-once`、`schedule`、`render-email`；部署文件在 `deploy/`（systemd、timer、crontab）。
+
+### 本轮新增
+
+**A) 邮件展示**
+
+- 新增渲染层 `render/`：把 `Digest` + `Snapshot` 渲染成 HTML 邮件，并带纯文本备用版本。
+- HTML：表格布局加内联 CSS，没有 `<style>`/`<link>`/脚本/图片/flex/grid；外层 `width=100%`，内层 `max-width:600px`，带 viewport 元标签，手机上自动收窄。
+- 内容：标题和日期（优先用快照的 `fetched_at`）；AI 摘要按 `##` 标题分节；趋势排行（序号、名称，链接到 `https://x.com/search?q=...`，数量缺失时不显示）；热帖卡片（作者、正文、点赞、转发、原帖链接）；页脚。
+- 安全：所有来自数据和模型的文本都经过 HTML 转义；链接只放行 http/https 且不含空白字符，`javascript:` 等一律丢弃；趋势链接固定指向 X 搜索页，不使用数据源给的 url。
+- `file` 推送器每次同时写 `.html` 和 `.txt`（先写临时文件再改名）；`stdout` 推送器打印纯文本。
+- 新命令 `render-email [--out-dir DIR] [--name NAME]`：走完整的抓取和摘要，只写出一份 html 和一份 txt，不做推送，第一行输出邮件主题，供外部发送。
+- 修掉 `post_count` 缺失被当成 0 的问题：趋势的 `post_count` 现在是 `Optional[int]`，缺失、null、负数、布尔、无法解析都记为未知（`None`）。未知时 prompt 里不写数量，system prompt 也要求模型不要猜测；邮件和备用摘要同样不显示。真实的 0 仍显示"0 帖"。
+- 摘要 system prompt 改为要求模型按 `## 今日概览`、`## 重点要点`、`## 值得关注` 分节输出，以便邮件分节渲染。
+
+**B) 健壮性**
+
+- 新增 `DEEPSEEK_TOTAL_TIMEOUT`（默认 60 秒），在单次读写超时 `DEEPSEEK_TIMEOUT` 之外再加一层。实现：调用跑在守护线程里，主线程最多等总时长；响应体分块读取并检查 deadline；单次超时不超过剩余预算。
+- 新增 `FallbackSummarizer` 加 `RuleBasedSummarizer`：主摘要器超时或任何运行期错误时，退回规则生成的中文摘要，流程照常出邮件。邮件主题、HTML 顶部、纯文本顶部都标注「AI 摘要暂不可用」；stderr 打印一行原因，原因不写进邮件，也不含密钥。
+- 配置错误不会被吞掉：缺 `DEEPSEEK_API_KEY` 或 `DEEPSEEK_BASE_URL` 非 https 仍然在启动时报错（退出码 2）。
+- 因此 `run-once` 在模型出错时不再失败，而是出带标注的备用邮件（这是行为变化）。
 
 ## 技术栈
 
@@ -31,22 +39,34 @@ Python 3.9+（本机 3.9.6），只用标准库，测试用 unittest，没有第
 PYTHONPATH=src python3 -m unittest discover -v -s tests -t .
 ```
 
-结果：`Ran 63 tests ... OK`，63 个全部通过（上一轮是 42 个，新增 21 个，在 `tests/test_fetchers.py`）。
+结果：`Ran 96 tests ... OK`，96 个全部通过（上一轮是 63 个，新增 33 个，在 `tests/test_render.py` 和 `tests/test_fallback.py`，并调整了几个因行为变化而过时的旧断言）。
 
-本机没有 X token，所有测试都没有真实网络请求：json 抓取器用临时文件和示例文件，xapi 用注入的假 opener。覆盖：示例文件解析、各种畸形字段、缺路径或缺 token 立即报错、请求形状（URL、方法、Bearer 头、查询参数、超时）、排序去重截断、401/403/429/5xx/其他 4xx、超时与连接失败、搜索阶段 429 降级、畸形响应，以及错误信息中不含 token。
+所有测试都没有真实网络请求：HTTP 用注入的假 opener，渲染和备用逻辑是纯本地的。新测试覆盖：
 
-另外手动跑了三次 CLI（无网络）：`XTD_FETCHER=json` 配示例快照能生成摘要文件，内容与示例一致；`XTD_FETCHER=xapi` 且无 token 时输出配置错误、退出码 2；快照文件不存在时输出"抓取失败"、退出码 1。
+- HTML：只含内联 CSS、无禁用标签、`max-width` 恰为 600、各板块、趋势链接、数量缺失不显示而真实 0 显示、热帖卡片、页脚。
+- 转义：`<script>`、`<img onerror>`、`javascript:` 链接、含 `onmouseover` 的链接都不会出现在输出里。
+- 纯文本版本、markdown 解析、备用标注在主题/HTML/文本三处都有且不泄露原因、`render-email` 恰好写出两个文件。
+- 总时长上限：慢速滴灌的响应、卡死的 opener 都能在上限内返回；单次超时被剩余预算封顶；错误能从工作线程传回；配置校验。
+- 备用：SummarizerError 和意外异常都会退回、不泄露密钥；端到端出带标注的邮件；CLI 在模型不可用时退出码仍为 0。
+- prompt：缺失的数量一个字都不写，真实的 0 仍写。
+
+另外手动跑了两次（均无外部网络）：
+
+- `render-email` 配示例快照：生成了 `preview.html` 和 `preview.txt`，主题和内容符合预期。
+- `run-once` 配 `XTD_SUMMARIZER=openai`、假 key、`DEEPSEEK_BASE_URL=http://127.0.0.1:9`（本机必然拒绝连接的端口）：stderr 提示已改用备用摘要，退出码 0，邮件顶部带「AI 摘要暂不可用」，没有 `<style>`/脚本/图片标签。
 
 ## 密钥检查
 
-对项目内所有文件 grep 了 `sk-...`、`api_key=<值>` 和 `X_BEARER_TOKEN=<值>` 形式，没有命中；仓库里没有 `.env` 文件。`.gitignore` 含 `.env`、`.env.*`（保留 `.env.example`）和 `out/`。测试里的 key 和 token 是明显的假值。
+对项目内所有文件 grep 了 `sk-...`、`api_key=<值>`、`X_BEARER_TOKEN=<值>` 形式，没有命中；仓库里没有 `.env` 文件。`.gitignore` 含 `.env`、`.env.*`（保留 `.env.example`）和 `out/`。测试里的 key 和 token 是明显的假值。
 
 ## 部署还差什么
 
-- xapi 抓取器没有用真实 token 联调过，这是最大的风险。字段名（`trend_name`、`tweet_count`、`public_metrics.like_count`、`retweet_count`）依据 X API v2 的公开约定编写，我没能在线核对官方文档（文档抓取未获授权）。还需确认：X 开发者账号的套餐是否包含趋势接口，搜索参数和查询语法是否被接受，额度是否够用（每次运行消耗 1 + `XTD_TRENDS_FOR_POSTS` 次调用）。
-- 真实模型也没有联调过，只在假 HTTP 下验证；上线前用真实 key 跑一次 `run-once`。
-- 抓取和摘要都没有自动重试和退避，429 和 5xx 只报错。
-- 真实推送渠道：实现 `Publisher`（邮件、Telegram、飞书、钉钉等），处理失败重试和去重。
+- 没有在真实邮箱客户端里看过 HTML 渲染效果。兼容性是按 QQ 邮箱和 Gmail 的已知限制写的（表格、内联 CSS、无 `<style>`），上线前请发测试邮件到 QQ 邮箱和 Gmail 的网页版与手机端确认，尤其是圆角、卡片边框和中文字体。
+- 还没有真正的发信渠道：目前只能产出 `.html` 和 `.txt` 文件，需要外部程序（或新增 SMTP/邮件服务的 `Publisher`）发送，并处理失败重试和去重。
+- xapi 抓取器没有用真实 token 联调过，字段名依据 X API v2 公开约定编写，也没能在线核对官方文档；还需确认开发者套餐是否包含趋势接口、额度是否够用。
+- 真实模型也没有联调过，只在假 HTTP 下验证。现在模型出错会静默退回备用摘要（只在 stderr 和邮件标注里体现），上线后要留意日志，避免一直是备用摘要却没人发现。
+- 总时长上限超时后，后台线程可能还在等网络直到其自身的单次超时到期（守护线程，不阻止退出，也不影响邮件产出）。
+- 抓取和摘要都没有自动重试和退避。
 - 部署文件（systemd、crontab）只写好未在 Linux 上实测，路径 `/opt/x-trends-digest` 和用户 `xtd` 是假设值；`schedule` 常驻命令也没有实际启动过，只有单元测试覆盖。
 - 生产密钥只放服务器的 `.env`（权限 600）或密钥管理系统。
 - 失败告警：任务失败目前只打印日志。

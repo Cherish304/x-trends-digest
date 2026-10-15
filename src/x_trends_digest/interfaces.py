@@ -1,7 +1,7 @@
 """三块功能的可替换接口。"""
 
 from abc import ABC, abstractmethod
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from .models import Digest, Snapshot
 
@@ -28,7 +28,10 @@ class Summarizer(ABC):
     def build_messages(self, snapshot: Snapshot) -> List[Dict[str, str]]:
         lines = ["今日趋势："]
         for t in snapshot.trends:
-            lines.append("%d. %s (%d 帖)" % (t.rank, t.name, t.post_count))
+            line = "%d. %s" % (t.rank, t.name)
+            if t.post_count is not None:  # 数量缺失时不写，避免模型把"未知"当成 0
+                line += " (%d 帖)" % t.post_count
+            lines.append(line)
         lines.append("")
         lines.append("热门帖子：")
         for p in snapshot.posts:
@@ -52,5 +55,9 @@ class Publisher(ABC):
     """把摘要推送出去。"""
 
     @abstractmethod
-    def publish(self, digest: Digest) -> str:
-        """返回一个描述推送去向的字符串（路径或渠道名）。"""
+    def publish(self, digest: Digest, snapshot: Optional[Snapshot] = None) -> str:
+        """返回一个描述推送去向的字符串（路径或渠道名）。
+
+        snapshot 是生成摘要所用的原始数据，用于渲染趋势排行和热帖卡片；
+        不传时只渲染摘要正文。
+        """

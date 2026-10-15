@@ -10,6 +10,8 @@ from x_trends_digest.config import load_config
 from x_trends_digest.factory import build_summarizer
 from x_trends_digest.fetchers import MockFetcher
 from x_trends_digest.summarizers import (
+    FallbackSummarizer,
+    RuleBasedSummarizer,
     OpenAICompatibleSummarizer,
     SummarizerConfigError,
     SummarizerError,
@@ -20,11 +22,14 @@ KEY = "test-key-NOT-REAL-123"
 
 
 class FakeResponse:
+    """像真实响应一样推进读取位置：读完后 read 返回 b""。"""
+
     def __init__(self, payload):
-        self._raw = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+        raw = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+        self._buf = io.BytesIO(raw)
 
     def read(self, n=-1):
-        return self._raw if n < 0 else self._raw[:n]
+        return self._buf.read(n)
 
     def __enter__(self):
         return self
@@ -110,7 +115,10 @@ class ConfigErrorTest(unittest.TestCase):
         env = {"DEEPSEEK_API_KEY": KEY, "DEEPSEEK_BASE_URL": "https://host.invalid"}
         for name in ("openai", "deepseek"):
             cfg = load_config(dict(env, XTD_SUMMARIZER=name))
-            self.assertIsInstance(build_summarizer(cfg), OpenAICompatibleSummarizer)
+            s = build_summarizer(cfg)
+            self.assertIsInstance(s, FallbackSummarizer)
+            self.assertIsInstance(s.primary, OpenAICompatibleSummarizer)
+            self.assertIsInstance(s.backup, RuleBasedSummarizer)
 
     def test_factory_missing_key_raises(self):
         cfg = load_config({"XTD_SUMMARIZER": "openai"})

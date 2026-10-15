@@ -6,7 +6,7 @@
 
 import json
 import os
-from typing import Any, List
+from typing import Any, List, Optional
 
 from ..interfaces import Fetcher
 from ..models import Post, Snapshot, Trend
@@ -29,6 +29,23 @@ def to_int(value: Any) -> int:
         except ValueError:
             return 0
     return 0
+
+
+def to_count(value: Any) -> Optional[int]:
+    """可缺失的数量：None、布尔、负数、无法解析的值都返回 None（表示未知，而不是 0）。"""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float):
+        return int(value) if value == value and value >= 0 else None
+    if isinstance(value, str):
+        try:
+            n = int(value.strip().replace(",", ""))
+        except ValueError:
+            return None
+        return n if n >= 0 else None
+    return None
 
 
 def _text(value: Any) -> str:
@@ -74,7 +91,7 @@ class JsonFileFetcher(Fetcher):
                 Trend(
                     rank=len(out) + 1,
                     name=_text(item["name"]),
-                    post_count=to_int(item.get("post_count")),
+                    post_count=to_count(item.get("post_count")),
                     url=_text(item.get("url")),
                 )
             )

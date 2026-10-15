@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Mapping, Optional
 
 DEFAULT_TIMEOUT = 30.0
+DEFAULT_TOTAL_TIMEOUT = 60.0
 
 
 @dataclass(frozen=True)
@@ -13,7 +14,8 @@ class ModelConfig:
     api_key: str = field(repr=False)
     base_url: str
     model: str
-    timeout: float = DEFAULT_TIMEOUT
+    timeout: float = DEFAULT_TIMEOUT  # 单次网络读写超时
+    total_timeout: float = DEFAULT_TOTAL_TIMEOUT  # 整个调用的总时长上限
 
 
 @dataclass(frozen=True)
@@ -83,6 +85,9 @@ def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
         base_url=env.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         model=env.get("DEEPSEEK_MODEL", "deepseek-chat"),
         timeout=timeout,
+        total_timeout=_num(
+            env, "DEEPSEEK_TOTAL_TIMEOUT", DEFAULT_TOTAL_TIMEOUT, float, 0.001
+        ),
     )
     return Config(
         fetcher=env.get("XTD_FETCHER", "mock"),

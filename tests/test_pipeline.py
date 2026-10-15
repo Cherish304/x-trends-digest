@@ -42,13 +42,18 @@ class SummarizerTest(unittest.TestCase):
 
 
 class PublisherTest(unittest.TestCase):
-    def test_file_publisher_writes_file(self):
+    def test_file_publisher_writes_html_and_txt(self):
         with tempfile.TemporaryDirectory() as d:
             path = FilePublisher(os.path.join(d, "sub")).publish(Digest("T", "正文"))
+            self.assertTrue(path.endswith(".html"))
             with open(path, encoding="utf-8") as f:
-                content = f.read()
-        self.assertIn("# T", content)
-        self.assertIn("正文", content)
+                html = f.read()
+            with open(path[:-5] + ".txt", encoding="utf-8") as f:
+                text = f.read()
+        self.assertIn("<html", html)
+        self.assertIn("正文", html)
+        self.assertIn("正文", text)
+        self.assertNotIn("<", text)
 
     def test_stdout_publisher_prints(self):
         out = []

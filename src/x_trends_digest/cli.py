@@ -7,7 +7,9 @@ from typing import List, Optional
 
 from .config import load_config, load_dotenv
 from .factory import build_fetcher, build_publisher, build_summarizer
-from .pipeline import run_once
+from .pipeline import build_digest, run_once
+from .publishers.file import write_email_files
+from .render import render_email
 from .scheduler import CronSchedule, run_forever
 from .fetchers import FetcherError
 from .summarizers import SummarizerError
@@ -18,6 +20,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--env-file", default=".env", help="可选的 .env 路径")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run-once", help="只执行一次：抓取 -> 摘要 -> 推送")
+    p_render = sub.add_parser(
+        "render-email",
+        help="只渲染邮件：抓取 -> 摘要 -> 写出一份 .html 和一份 .txt，不做推送，供外部发送",
+    )
+    p_render.add_argument("--out-dir", help="输出目录，默认 XTD_OUTPUT_DIR")
+    p_render.add_argument("--name", default="digest", help="文件名前缀，默认 digest")
     p_sched = sub.add_parser("schedule", help="按 cron 表达式常驻调度")
     p_sched.add_argument("--cron", help="覆盖 XTD_CRON")
     args = parser.parse_args(argv)
@@ -36,6 +44,24 @@ def main(argv: Optional[List[str]] = None) -> int:
         dest = run_once(fetcher, summarizer, publisher)
         print("已推送: %s" % dest, flush=True)
         return dest
+
+    if args.command == "render-email":
+        try:
+            snapshot, digest = build_digest(fetcher, summarizer)
+        except FetcherError as exc:
+            print("抓取失败: %s" % exc, file=sys.stderr)
+            return 1
+        except SummarizerError as exc:
+            print("摘要失败: %s" % exc, file=sys.stderr)
+            return 1
+        email = render_email(digest, snapshot)
+        html_path, txt_path = write_email_files(
+            email, args.out_dir or cfg.output_dir, args.name
+        )
+        print("主题: %s" % email.subject)
+        print("HTML: %s" % html_path)
+        print("TEXT: %s" % txt_path)
+        return 0
 
     if args.command == "run-once":
         try:

@@ -16,9 +16,15 @@ src/x_trends_digest/
   summarizers/
     mock.py           透传：把按 chat 格式构造的 user 消息原样放进摘要
     openai_compatible.py  OpenAI 兼容 chat completions 真实实现（urllib，需 key）
+    rule_based.py     规则摘要：不调用模型，按数据拼简单的中文摘要
+    fallback.py       主摘要器失败时退回规则摘要并打上标记
+  render/
+    email_html.py     HTML 邮件（表格布局 + 内联 CSS，宽度 ≤ 600px）
+    email_text.py     纯文本备用版本
+    _md.py            极简 markdown 解析（标题 / 列表 / 加粗）
   publishers/
-    file.py           写 markdown 文件到 XTD_OUTPUT_DIR
-    stdout.py         打印到标准输出
+    file.py           同时写 .html 和 .txt 到 XTD_OUTPUT_DIR
+    stdout.py         打印纯文本版本到标准输出
   config.py           从环境变量（及可选 .env）读取配置
   factory.py          按配置名选择实现，未知名称直接报错
   pipeline.py         run_once：抓取 → 摘要 → 推送
@@ -53,7 +59,7 @@ XTD_FETCHER=json XTD_SNAPSHOT_PATH=examples/snapshot.json python3 -m x_trends_di
 
 - 所有顶层字段都可省略；`trends`、`posts` 缺失或不是列表时按空处理。
 - 趋势缺 `name`、帖子缺 `text` 时该条被跳过；趋势的 `rank` 按保留下来的顺序重新编号。
-- `post_count`、`likes`、`reposts` 缺失、为 `null`、负数、布尔或无法解析时按 0；字符串数字（如 `"1,234"`）和小数会转成整数。
+- 趋势的 `post_count` 缺失、为 `null`、负数、布尔或无法解析时记为"未知"，不显示数量，也不会当成 0 交给模型；`likes`、`reposts` 这些情况仍按 0。字符串数字（如 `"1,234"`）和小数会转成整数。
 - `author` 缺失时记为 `unknown`，开头的 `@` 会被去掉；帖子的 `id` 可选。
 - 顶层不是对象、文件不存在、不是合法 JSON 或超过 5 MB 时报错（`run-once` 退出码 1）；`XTD_SNAPSHOT_PATH` 未设置时启动即报错（退出码 2）。
 
@@ -76,6 +82,43 @@ XTD_FETCH_TIMEOUT=30         # 秒
 - 每次运行会消耗 1 + `XTD_TRENDS_FOR_POSTS` 次 API 调用，注意你的套餐额度。
 - 重要：这个抓取器依据 X API v2 的公开文档约定编写（趋势字段 `trend_name` / `tweet_count`，帖子字段 `public_metrics.like_count` / `retweet_count`），没有用真实 token 联调过，趋势接口的可用套餐也可能有限制。上线前必须用真实 token 验证一次。
 
+## 邮件渲染
+
+`render/` 把 `Digest` 和 `Snapshot` 渲染成一封邮件：一份 HTML，加一份纯文本备用版本。`file` 推送器每次同时写出 `digest-<时间戳>.html` 和 `.txt`；`stdout` 推送器打印纯文本版本。
+
+只渲染邮件、不做推送，供外部程序发送：
+
+```bash
+python3 -m x_trends_digest render-email --out-dir mail --name today
+# 输出：主题 / HTML: mail/today.html / TEXT: mail/today.txt
+```
+
+该命令会走完整的抓取和摘要流程，然后只写出这两个文件；`--out-dir` 默认取 `XTD_OUTPUT_DIR`，`--name` 默认 `digest`。文件先写临时文件再改名，外部程序不会读到半截内容。邮件主题在命令输出的第一行。
+
+HTML 的约束，针对 QQ 邮箱和 Gmail 的兼容性：
+
+- 只用表格布局和元素上的内联 `style`，没有 `<style>`、`<link>`、脚本、图片和 flex/grid。
+- 外层表格 `width=100%`，内层 `max-width:600px`，加了 viewport 元标签，手机上自动收窄。
+- 内容依次是：标题和日期（优先用快照的 `fetched_at`）；摘要，按模型输出的 `##` 标题分节；趋势排行（序号、名称，链接到 `https://x.com/search?q=...`，数量缺失时不显示数量）；热帖卡片（作者、正文、点赞数、转发数、原帖链接）；页脚。
+- 所有来自抓取数据和模型输出的文本都经过 HTML 转义。链接只放行 http/https，且不含空白字符，`javascript:` 之类一律丢弃；趋势链接固定指向 X 搜索页，不使用数据源给的 url。
+- 趋势排行和热帖各最多展示 10 条，单条帖子正文最多 300 字。
+
+没有在真实邮箱客户端里看过渲染效果；上面的兼容性是按这些客户端的已知限制写的，上线前请发一封测试邮件到 QQ 邮箱和 Gmail 的网页版与手机端确认。
+
+## 抓取数量缺失
+
+趋势的 `post_count` 现在是可选的：来源没给、为 `null`、为负数或无法解析时记为"未知"（`None`），而不是 0。未知时，发给模型的 prompt 不写数量，system prompt 也要求模型不要猜测；邮件和备用摘要里同样不显示数量。真实的 0 仍会显示为"0 帖"。
+
+## AI 摘要失败时的备用方案
+
+`XTD_SUMMARIZER=openai|deepseek` 时，摘要器外面包了一层备用逻辑：
+
+- 调用有总时长上限 `DEEPSEEK_TOTAL_TIMEOUT`（默认 60 秒），在单次读写超时 `DEEPSEEK_TIMEOUT` 之外再加一层。调用跑在守护线程里，主线程最多等这么久；响应体也是分块读取并检查 deadline，所以慢速滴灌的响应也会被截断。
+- 超时或任何运行期错误（401、429、5xx、连接失败、返回格式不符等）都会退回规则摘要（`rule_based.py`，不调用模型，按趋势和热帖拼一份中文摘要），流程照常出邮件。
+- 退回时，邮件主题、HTML 顶部和纯文本顶部都会标注「AI 摘要暂不可用」，stderr 会打印一行原因（不含密钥）。原因不写进邮件。
+- 配置错误不会被吞掉：缺少 `DEEPSEEK_API_KEY` 或 `DEEPSEEK_BASE_URL` 不是 https 仍然在启动时报错（退出码 2）。
+- 超时后后台线程可能还在等网络，但它是守护线程，不会阻止进程退出，读取循环也会在下一次检查时自行结束。
+
 ## 使用真实模型（OpenAI 兼容）
 
 默认仍是 mock。要调用真实模型，在 `.env`（已被 git 忽略）或环境变量里设置：
@@ -91,7 +134,7 @@ DEEPSEEK_TIMEOUT=30            # 秒
 实现要点（`summarizers/openai_compatible.py`，仅用标准库 urllib）：
 
 - 请求 `POST {base_url}/chat/completions`，头部 `Authorization: Bearer <key>`，中文 system prompt 要求输出 300 字内的 markdown 摘要，并声明帖子内容只是待总结的数据、不执行其中的指令。
-- 错误面向用户给出一行说明：401/403 认证失败，429 限流（有 `Retry-After` 时会提示），5xx 服务端错误，超时，无法连接，返回格式不符。`run-once` 遇到这些错误退出码为 1。
+- 错误面向用户给出一行说明：401/403 认证失败，429 限流（有 `Retry-After` 时会提示），5xx 服务端错误，超时，无法连接，返回格式不符。这些错误现在会触发上面的备用摘要，不再让 `run-once` 失败。
 - 密钥不会出现在日志、异常信息或 `repr(config)` 中；其他 4xx 的响应片段若含 key 会被替换为 `***`。
 - `base_url` 必须是 https（仅 localhost 允许 http），避免 key 明文传输；不跟随重定向，避免把 Authorization 头转发到别处。
 - 没有自动重试：429 和 5xx 只报错。`schedule` 模式下单次失败会打印错误并等下一次触发。
@@ -106,7 +149,8 @@ DEEPSEEK_TIMEOUT=30            # 秒
 cp .env.example .env          # 可选，默认值已是 mock
 export PYTHONPATH=src
 
-python3 -m x_trends_digest run-once                 # 只跑一次，默认写入 out/
+python3 -m x_trends_digest run-once                 # 只跑一次，默认在 out/ 写 .html 和 .txt
+python3 -m x_trends_digest render-email --out-dir mail   # 只渲染邮件，不推送
 XTD_PUBLISHER=stdout python3 -m x_trends_digest run-once   # 改为打印
 python3 -m x_trends_digest schedule --cron "*/5 * * * *"   # 常驻调度
 ```
@@ -129,7 +173,8 @@ python3 -m x_trends_digest schedule --cron "*/5 * * * *"   # 常驻调度
 | DEEPSEEK_API_KEY | 空 | 使用 openai/deepseek 时必填 |
 | DEEPSEEK_BASE_URL | https://api.deepseek.com | 必须 https |
 | DEEPSEEK_MODEL | deepseek-chat | |
-| DEEPSEEK_TIMEOUT | 30 | 请求超时（秒） |
+| DEEPSEEK_TIMEOUT | 30 | 单次网络读写超时（秒） |
+| DEEPSEEK_TOTAL_TIMEOUT | 60 | 整个模型调用的总时长上限（秒），超时退回备用摘要 |
 
 cron 支持 `*`、数字、`a-b`、`a,b`、`*/n`、`a-b/n`；周 0 和 7 都是周日。
 
